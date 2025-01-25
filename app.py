@@ -1,85 +1,54 @@
 import streamlit as st
-import openai
 import requests
-import numpy as np
-import faiss
 from bs4 import BeautifulSoup
-from typing import List
-
-# Set API keys (make sure to have secrets setup in Streamlit Cloud)
-openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 # Шаг 1: Получение списка курсов с karpov.courses
 def fetch_courses():
-    # URL с курсами
     url = "https://karpov.courses"
     
     # Запрос на страницу
     response = requests.get(url)
-    soup = BeautifulSoup(response.text, "html.parser")
-    
-    # Поиск элементов с курсами (будет зависеть от структуры сайта)
+    if response.status_code == 200:
+        soup = BeautifulSoup(response.text, "html.parser")
+    else:
+        st.error(f"Ошибка при получении страницы: {response.status_code}")
+        return []
+
+    # Парсинг курсов с сайта
     courses = []
     for course in soup.find_all("div", class_="course-card"):
-        name = course.find("h3").text.strip()
-        description = course.find("p").text.strip()
-        link = course.find("a")["href"]
-        courses.append({"name": name, "description": description, "link": link})
+        name = course.find("h3").text.strip() if course.find("h3") else "Неизвестно"
+        description = course.find("p").text.strip() if course.find("p") else "Описание отсутствует"
+        link = course.find("a")["href"] if course.find("a") else "Ссылка отсутствует"
+        
+        # Дополнительные параметры
+        specialization = course.find("span", class_="specialization").text.strip() if course.find("span", class_="specialization") else "Не указано"
+        is_free = "Бесплатный" if course.find("span", class_="free-course") else "Платный"
+        has_simulator = "Да" if course.find("span", class_="simulator") else "Нет"
+        
+        courses.append({
+            "name": name,
+            "description": description,
+            "link": link,
+            "specialization": specialization,
+            "is_free": is_free,
+            "has_simulator": has_simulator
+        })
     
     return courses
 
-# Шаг 2: Получение эмбеддингов
-def get_embedding(text, model="text-embedding-ada-002"):
-    try:
-        response = openai.Embedding.create(input=[text], model=model)
-        return np.array(response['data'][0]['embedding'])
-    except Exception as e:
-        st.error(f"Ошибка получения эмбеддингов: {e}")
-        return None
-
-# Построение базы данных с эмбеддингами
-def build_vector_db(courses):
-    if not courses:
-        st.error("Курсы не найдены")
-        return None, None
-
-    descriptions = [course["description"] for course in courses]
-    
-    embeddings = []
-    for desc in descriptions:
-        embedding = get_embedding(desc)
-        if embedding is not None:
-            embeddings.append(embedding)
-
-    if not embeddings:
-        st.error("Не удалось создать эмбеддинги для курсов")
-        return None, None
-
-    dimension = len(embeddings[0])
-    index = faiss.IndexFlatL2(dimension)
-    index.add(np.array(embeddings).astype('float32'))
-    
-    return index, courses
-
-# Рекомендация курса
-def recommend_course(user_query, index, courses):
-    if not index:
-        st.error("Индекс не построен. Попробуйте снова.")
-        return None
-
-    query_embedding = get_embedding(user_query)
-    if query_embedding is None:
-        return None
-
-    query_embedding = query_embedding.astype('float32').reshape(1, -1)
-    distances, indices = index.search(query_embedding, 1)
-    
-    if indices[0][0] == -1:
-        st.error("Курс не найден по запросу.")
-        return None
-    
-    recommended_course = courses[indices[0][0]]
-    return recommended_course
+# Шаг 2: Фильтрация курсов по запросу пользователя
+def recommend_course(courses, user_query, filter_free=None, filter_simulator=None):
+    recommended_courses = []
+    for course in courses:
+        if user_query.lower() in course['name'].lower() or user_query.lower() in course['description'].lower():
+            # Фильтрация по дополнительным параметрам
+            if filter_free and filter_free != course['is_free']:
+                continue
+            if filter_simulator and filter_simulator != course['has_simulator']:
+                continue
+            recommended_courses.append(course)
+    return recommended_courses
 
 # Интерфейс Streamlit
 st.title("Рекомендатор курсов по Data Science")
@@ -88,25 +57,31 @@ st.write("Введите, что вы хотите изучить, и мы на�
 # Ввод пользователя
 user_input = st.text_input("Что вы хотите изучить?", placeholder="Например: нейронные сети, Python, анализ данных...")
 
+# Фильтры для курсов
+filter_free = st.selectbox("Тип курса", ["Все", "Бесплатный", "Платный"])
+filter_simulator = st.selectbox("Симуляторы", ["Все", "Да", "Нет"])
+
 if user_input:
     with st.spinner("Ищем подходящий курс..."):
         try:
-            # Шаг 3: Построение базы данных
+            # Шаг 3: Получение курсов с сайта
             courses_data = fetch_courses()  # Получаем курсы с сайта
             if not courses_data:
                 st.error("Не удалось загрузить курсы с сайта.")
             else:
-                index, courses_data = build_vector_db(courses_data)  # Строим индекс
-
-                # Шаг 4: Рекомендация курса
-                recommended_course = recommend_course(user_input, index, courses_data)
-
-                if recommended_course:
-                    # Отображение результата
-                    st.success(f"Мы рекомендуем курс: **{recommended_course['name']}**")
-                    st.write(f"Описание: {recommended_course['description']}")
-                    st.write(f"Подробнее: [Перейти к курсу]({recommended_course['link']})")
+                # Фильтрация курсов по запросу и дополнительным фильтрам
+                recommended_courses = recommend_course(courses_data, user_input, filter_free, filter_simulator)
+                
+                if recommended_courses:
+                    st.write(f"Мы нашли {len(recommended_courses)} курсов, которые могут вас заинтересовать!")
+                    for course in recommended_courses:
+                        st.subheader(course['name'])
+                        st.write(course['description'])
+                        st.write(f"Специализация: {course['specialization']}")
+                        st.write(f"Тип курса: {course['is_free']}")
+                        st.write(f"Симулятор: {course['has_simulator']}")
+                        st.write(f"[Ссылка на курс]({course['link']})")
                 else:
-                    st.error("Не удалось найти курс.")
+                    st.write("К сожалению, подходящих курсов не найдено.")
         except Exception as e:
             st.error(f"Произошла ошибка: {e}")
