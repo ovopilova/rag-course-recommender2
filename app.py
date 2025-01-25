@@ -1,40 +1,47 @@
 import streamlit as st
 import openai
-import faiss
 import requests
-import json
-import os
-from typing import List
-import openai
 import numpy as np
 import faiss
-import streamlit as st
-# Set API keys
+from bs4 import BeautifulSoup
+from typing import List
+
+# Set API keys (make sure to have secrets setup in Streamlit Cloud)
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
-# Курсы для рекомендации
-courses = [
-    {"name": "Машинное обучение", "description": "Изучите базовые алгоритмы машинного обучения: регрессия, деревья решений, кластеризация."},
-    {"name": "SQL для аналитиков", "description": "Научитесь писать SQL-запросы, работать с базами данных и анализировать данные."},
-    {"name": "Нейронные сети", "description": "Разработайте свои первые нейронные сети и изучите их архитектуру."},
-    {"name": "Анализ данных в Python", "description": "Научитесь анализировать данные с использованием pandas, numpy и matplotlib."},
-    {"name": "Продуктовая аналитика", "description": "Изучите метрики аналитики и научитесь строить отчёты для продукта."}
-]
+# Шаг 1: Получение списка курсов с karpov.courses
+def fetch_courses():
+    # URL с курсами
+    url = "https://karpov.courses"
+    
+    # Запрос на страницу
+    response = requests.get(url)
+    soup = BeautifulSoup(response.text, "html.parser")
+    
+    # Поиск элементов с курсами (будет зависеть от структуры сайта)
+    courses = []
+    for course in soup.find_all("div", class_="course-card"):
+        name = course.find("h3").text.strip()
+        description = course.find("p").text.strip()
+        link = course.find("a")["href"]
+        courses.append({"name": name, "description": description, "link": link})
+    
+    return courses
 
-# Получение эмбеддингов от OpenAI
+# Шаг 2: Получение эмбеддингов
 def get_embedding(text, model="text-embedding-ada-002"):
     response = openai.Embedding.create(input=[text], model=model)
     return np.array(response['data'][0]['embedding'])
 
-# Построение базы данных для поиска
+# Построение базы данных с эмбеддингами
 def build_vector_db(courses):
     descriptions = [course["description"] for course in courses]
     embeddings = [get_embedding(desc) for desc in descriptions]
-
+    
     dimension = len(embeddings[0])
     index = faiss.IndexFlatL2(dimension)
     index.add(np.array(embeddings).astype('float32'))
-
+    
     return index, courses
 
 # Рекомендация курса
@@ -45,22 +52,25 @@ def recommend_course(user_query, index, courses):
     return recommended_course
 
 # Интерфейс Streamlit
-st.title("Рекомендатор курсов")
+st.title("Рекомендатор курсов по Data Science")
 st.write("Введите, что вы хотите изучить, и мы найдём лучший курс для вас!")
 
-user_input = st.text_input("Что вы хотите изучить?", placeholder="Например: нейронные сети, SQL, анализ данных...")
+# Ввод пользователя
+user_input = st.text_input("Что вы хотите изучить?", placeholder="Например: нейронные сети, Python, анализ данных...")
 
 if user_input:
     with st.spinner("Ищем подходящий курс..."):
         try:
-            # Построение базы данных
-            index, courses_data = build_vector_db(courses)
+            # Шаг 3: Построение базы данных
+            courses_data = fetch_courses()  # Получаем курсы с сайта
+            index, courses_data = build_vector_db(courses_data)  # Строим индекс
 
-            # Рекомендация курса
+            # Шаг 4: Рекомендация курса
             recommended_course = recommend_course(user_input, index, courses_data)
 
             # Отображение результата
             st.success(f"Мы рекомендуем курс: **{recommended_course['name']}**")
             st.write(f"Описание: {recommended_course['description']}")
+            st.write(f"Подробнее: [Перейти к курсу]({recommended_course['link']})")
         except Exception as e:
             st.error(f"Произошла ошибка: {e}")
