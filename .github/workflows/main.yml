@@ -25,4 +25,4 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}  # Ключ будет передан как переменная окружения
         run: |
-          python your_script.py
+          python app.py
