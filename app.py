@@ -10,7 +10,7 @@ import numpy as np
 import faiss
 import streamlit as st
 # Set API keys
-openai.api_key = os.getenv('OPENAI_API_KEY')
+openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 # Курсы для рекомендации
 courses = [
