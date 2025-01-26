@@ -5,7 +5,7 @@ import faiss
 import numpy as np
 import openai
 import streamlit as st
-from typing import List
+from typing import List, Tuple
 
 def fetch_courses() -> List[str]:
     """
