@@ -20,8 +20,8 @@ def get_gpt2_embedding(text):
     tokens = generator.tokenizer.encode(generated_text, return_tensors='pt')
     embedding = generator.model.transformer.wte(tokens)
     
-    # Используем среднее значение токенов как эмбеддинг
-    return embedding.mean(dim=1).detach().numpy()
+    # Используем среднее значение токенов как эмбеддинг и преобразуем в одномерный массив
+    return embedding.mean(dim=1).detach().numpy().flatten()
 
 # Парсим курсы с сайта Karpov
 def get_courses():
@@ -54,7 +54,11 @@ def recommend_course(user_input, courses):
 
     query_embedding = get_gpt2_embedding(user_input)  # Эмбеддинг запроса
 
-    similarities = cosine_similarity([query_embedding], course_embeddings)
+    # Преобразуем эмбеддинги в двумерные массивы для использования в cosine_similarity
+    course_embeddings = np.array(course_embeddings)
+    query_embedding = np.expand_dims(query_embedding, axis=0)
+
+    similarities = cosine_similarity(query_embedding, course_embeddings)
     recommended_index = similarities.argmax()
 
     return course_titles[recommended_index], courses[recommended_index][1]
