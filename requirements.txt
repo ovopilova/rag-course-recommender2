@@ -4,5 +4,6 @@ faiss-cpu
 requests
 numpy
 beautifulsoup4
+torch
 scikit-learn
 transformers
