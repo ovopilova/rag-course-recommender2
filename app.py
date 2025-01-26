@@ -1,41 +1,62 @@
 import openai
+import requests
+from bs4 import BeautifulSoup
 import numpy as np
-import faiss
 import streamlit as st
-import time
 
-# Укажите API-ключ OpenAI
+# Задайте API-ключ OpenAI
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
-# Список курсов
-courses = [
-    {"name": "Машинное обучение", "description": "Изучите алгоритмы машинного обучения, такие как регрессия, деревья решений и кластеризация."},
-    {"name": "SQL для аналитиков", "description": "Освойте SQL, чтобы работать с базами данных и анализировать данные."},
-    {"name": "Нейронные сети", "description": "Изучите основы нейронных сетей и разработайте свои первые модели на Python."},
-    {"name": "Анализ данных в Python", "description": "Научитесь анализировать данные с помощью pandas, numpy и matplotlib."},
-    {"name": "Продуктовая аналитика", "description": "Изучите основные метрики продуктовой аналитики и научитесь строить отчёты."}
-]
+# URL страницы с курсами
+url = "https://karpov.courses"
 
-# Получение эмбеддингов с помощью OpenAI
-def get_embedding(text, model="text-embedding-ada-002"):
-    response = openai.Embedding.create(input=text, model=model)
+# Функция для получения эмбеддинга с использованием OpenAI
+def get_gpt_embedding(text):
+    response = openai.Embedding.create(input=text, model="text-embedding-ada-002")
     return np.array(response['data'][0]['embedding'])
 
-# Создание векторной базы данных
-def build_vector_db(courses):
-    descriptions = [course["description"] for course in courses]
-    embeddings = [get_embedding(desc) for desc in descriptions]
-    dimension = len(embeddings[0])
-    index = faiss.IndexFlatL2(dimension)
-    index.add(np.array(embeddings).astype('float32'))
-    return index, embeddings
+# Функция для получения курсов с сайта
+def get_courses_from_website():
+    # Сделаем запрос к странице
+    response = requests.get(url)
+
+    # Проверим успешность запроса
+    if response.status_code == 200:
+        print("Страница успешно загружена!")
+    else:
+        print("Не удалось загрузить страницу")
+
+    # Парсим HTML
+    soup = BeautifulSoup(response.text, 'html.parser')
+
+    # Ищем все ссылки с классом, который связан с курсами
+    courses = soup.find_all('a', class_='t978__innermenu-link')
+
+    # Извлекаем название и URL каждого курса
+    valid_courses = []
+    for course in courses:
+        title = course.find('span', class_='t978__link-inner_left').text.strip()
+        link = course['href']
+        valid_courses.append((title, link))
+
+    return valid_courses
 
 # Рекомендация курса
-def recommend_course(user_query, index, courses):
-    query_embedding = get_embedding(user_query).astype('float32').reshape(1, -1)
-    distances, indices = index.search(query_embedding, 1)
-    recommended_course = courses[indices[0][0]]
-    return recommended_course, distances[0][0]
+def recommend_course(user_query, courses):
+    # Получаем эмбеддинг для запроса пользователя
+    query_embedding = get_gpt_embedding(user_query).astype('float32').reshape(1, -1)
+    
+    # Подготовим эмбеддинги для каждого курса
+    course_embeddings = [get_gpt_embedding(course[0]) for course in courses]
+
+    # Вычисляем расстояния между запросом и курсами
+    distances = [np.linalg.norm(query_embedding - course_embedding) for course_embedding in course_embeddings]
+
+    # Находим курс с наименьшим расстоянием (самый подходящий)
+    best_match_idx = np.argmin(distances)
+    best_course = courses[best_match_idx]
+
+    return best_course, distances[best_match_idx]
 
 # Создание интерфейса Streamlit
 st.title("Рекомендатор курсов")
@@ -45,12 +66,15 @@ user_input = st.text_input("Что вы хотите изучить?", placehold
 
 if user_input:
     with st.spinner("Ищем подходящий курс..."):
-        # Построение векторной базы
-        index, _ = build_vector_db(courses)
+        # Получаем список курсов с сайта
+        courses = get_courses_from_website()
 
-        # Рекомендация курса
-        recommended_course, distance = recommend_course(user_input, index, courses)
+        if courses:
+            # Рекомендация курса
+            recommended_course, distance = recommend_course(user_input, courses)
 
-        # Вывод результата
-        st.success(f"Мы рекомендуем вам курс: **{recommended_course['name']}**")
-        st.write(f"Описание: {recommended_course['description']}")
+            # Вывод результата
+            st.success(f"Мы рекомендуем вам курс: **{recommended_course[0]}**")
+            st.write(f"Подробнее по ссылке: {recommended_course[1]}")
+        else:
+            st.error("Не удалось найти курсы. Попробуйте снова позже.")
