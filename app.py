@@ -12,7 +12,7 @@ url = "https://karpov.courses"
 
 # Функция для получения эмбеддинга с использованием OpenAI
 def get_gpt_embedding(text):
-    response = openai.Embedding.create(input=text, model="text-embedding-ada-002")
+    response = openai.Embedding.create(input=text, model="text-embedding-babbage-001")
     return np.array(response['data'][0]['embedding'])
 
 # Функция для получения курсов с сайта
