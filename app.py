@@ -1,87 +1,129 @@
-import streamlit as st
+import os
 import requests
 from bs4 import BeautifulSoup
+import re
+from typing import List, Tuple
 
-# Шаг 1: Получение списка курсов с karpov.courses
-def fetch_courses():
-    url = "https://karpov.courses"
-    
-    # Запрос на страницу
-    response = requests.get(url)
-    if response.status_code == 200:
-        soup = BeautifulSoup(response.text, "html.parser")
-    else:
-        st.error(f"Ошибка при получении страницы: {response.status_code}")
+def fetch_courses() -> List[Tuple[str, str]]:
+    """
+    Fetch course titles and descriptions from karpov.courses.
+    Returns a list of (title, description) tuples.
+    """
+    base_url = "https://karpov.courses"
+    response = requests.get(base_url)
+    if response.status_code != 200:
+        print("Failed to fetch courses from karpov.courses.")
         return []
 
-    # Парсинг курсов с сайта
+    soup = BeautifulSoup(response.text, "html.parser")
     courses = []
-    for course in soup.find_all("div", class_="course-card"):
-        name = course.find("h3").text.strip() if course.find("h3") else "Неизвестно"
-        description = course.find("p").text.strip() if course.find("p") else "Описание отсутствует"
-        link = course.find("a")["href"] if course.find("a") else "Ссылка отсутствует"
-        
-        # Дополнительные параметры
-        specialization = course.find("span", class_="specialization").text.strip() if course.find("span", class_="specialization") else "Не указано"
-        is_free = "Бесплатный" if course.find("span", class_="free-course") else "Платный"
-        has_simulator = "Да" if course.find("span", class_="simulator") else "Нет"
-        
-        courses.append({
-            "name": name,
-            "description": description,
-            "link": link,
-            "specialization": specialization,
-            "is_free": is_free,
-            "has_simulator": has_simulator
-        })
-    
-    return courses
 
-# Шаг 2: Фильтрация курсов по запросу пользователя
-def recommend_course(courses, user_query, filter_free=None, filter_simulator=None):
-    recommended_courses = []
-    for course in courses:
-        if user_query.lower() in course['name'].lower() or user_query.lower() in course['description'].lower():
-            # Фильтрация по дополнительным параметрам
-            if filter_free and filter_free != course['is_free']:
-                continue
-            if filter_simulator and filter_simulator != course['has_simulator']:
-                continue
-            recommended_courses.append(course)
-    return recommended_courses
+    # Стоп-слова для удаления бесполезных блоков
+    stop_words = [
+        "оплат", "налоговый вычет", "рассрочк", "гарантия возврата",
+        "платеж", "платёж", "скидк", "процент", "работодатель", "карьерный курс",
+        "инфраструктур", "финальный проект", "партнер", "старт потока", "бесплатн", 'деньги', 'подробнее', 'вернём', 'лиценз', 'консульт'
+    ]
 
-# Интерфейс Streamlit
-st.title("Рекомендатор курсов по Data Science")
-st.write("Введите, что вы хотите изучить, и мы найдём лучший курс для вас!")
-
-# Ввод пользователя
-user_input = st.text_input("Что вы хотите изучить?", placeholder="Например: нейронные сети, Python, анализ данных...")
-
-# Фильтры для курсов
-filter_free = st.selectbox("Тип курса", ["Все", "Бесплатный", "Платный"])
-filter_simulator = st.selectbox("Симуляторы", ["Все", "Да", "Нет"])
-
-if user_input:
-    with st.spinner("Ищем подходящий курс..."):
+    # Найти все ссылки на курсы
+    for course in soup.find_all('a', class_='t978__innermenu-link'):
         try:
-            # Шаг 3: Получение курсов с сайта
-            courses_data = fetch_courses()  # Получаем курсы с сайта
-            if not courses_data:
-                st.error("Не удалось загрузить курсы с сайта.")
-            else:
-                # Фильтрация курсов по запросу и дополнительным фильтрам
-                recommended_courses = recommend_course(courses_data, user_input, filter_free, filter_simulator)
-                
-                if recommended_courses:
-                    st.write(f"Мы нашли {len(recommended_courses)} курсов, которые могут вас заинтересовать!")
-                    for course in recommended_courses:
-                        st.subheader(course['name'])
-                        st.write(course['description'])
-                        st.write(f"Специализация: {course['specialization']}")
-                        st.write(f"Тип курса: {course['is_free']}")
-                        st.write(f"Симулятор: {course['has_simulator']}")
-                        st.write(f"[Ссылка на курс]({course['link']})")
-                else:
-                    st.write("К сожалению, подходящих курсов не найдено.")
+            title = course.find('span', class_='t978__link-inner_left').text.strip()
+            link = course['href']
+            # Зайти на страницу курса и получить подробное описание
+            course_response = requests.get(link)
+            if course_response.status_code == 200:
+                course_soup = BeautifulSoup(course_response.text, 'html.parser')
+                infos = course_soup.find_all('div', class_='tn-atom')
+
+                # Оставить только полезные текстовые блоки
+                filtered_text = []
+                for element in infos:
+                    text = element.get_text(strip=True).replace("\xa0", " ")
+                    if not any(stop_word in text.lower() for stop_word in stop_words):
+                        filtered_text.append(text)
+
+                description = ' '.join(filtered_text)
+                courses.append((title, description))
         except Exception as e:
-            st.error(f"Произошла ошибка: {e}")
+            print(f"Error fetching details for {title}: {e}")
+
+    return list(set(courses))  # Удалить дубликаты
+
+
+# 2. BUILD VECTOR DATABASE
+def get_embedding(text: str, model: str = "text-embedding-ada-002") -> np.ndarray:
+    """
+    Get OpenAI embedding for a given text.
+    """
+    response = openai.Embedding.create(input=text, model=model)
+    return np.array(response["data"][0]["embedding"], dtype=np.float32)
+
+def build_vector_db(courses: List[Tuple[str, str]]) -> Tuple[faiss.IndexFlatL2, List[str]]:
+    """
+    Build a FAISS vector database from course descriptions.
+    Returns the FAISS index and corresponding course titles.
+    """
+    descriptions = [desc for _, desc in courses]
+    embeddings = [get_embedding(desc) for desc in descriptions]
+
+    dimension = len(embeddings[0])
+    index = faiss.IndexFlatL2(dimension)
+    index.add(np.array(embeddings))
+
+    return index, [title for title, _ in courses]
+
+# 3. RECOMMEND A COURSE
+def recommend_course(user_input: str, index: faiss.IndexFlatL2, courses: List[str], model: str = "text-embedding-ada-002") -> str:
+    """
+    Recommend a course based on user input.
+    """
+    user_embedding = get_embedding(user_input, model=model)
+    _, indices = index.search(np.array([user_embedding]), k=1)
+    return courses[indices[0][0]]
+
+# 4. STREAMLIT APPLICATION
+st.title("Course Recommender")
+
+# Get API Key from Streamlit Secrets
+openai.api_key = st.secrets["OPENAI_API_KEY"]
+
+# Fetch courses
+st.write("Fetching courses from karpov.courses...")
+courses = fetch_courses()
+
+if not courses:
+    st.error("No courses found. Please check the parsing logic.")
+else:
+    st.success(f"Fetched {len(courses)} courses.")
+
+    # Build vector database
+    st.write("Building vector database...")
+    index, course_titles = build_vector_db(courses)
+
+    # User interaction
+    st.write("Let's find the best course for you!")
+
+    if "dialog_state" not in st.session_state:
+        st.session_state.dialog_state = "initial"
+
+    if st.session_state.dialog_state == "initial":
+        st.write("Hi! What would you like to learn today?")
+        user_input = st.text_input("Your answer:")
+
+        if user_input:
+            st.session_state.user_input = user_input
+            st.session_state.dialog_state = "follow_up"
+
+    elif st.session_state.dialog_state == "follow_up":
+        st.write(f"Got it! You're interested in {st.session_state.user_input}. Could you tell me a bit more about your goals?")
+        user_goal = st.text_input("Your goal:")
+
+        if user_goal:
+            st.session_state.user_goal = user_goal
+            st.session_state.dialog_state = "recommendation"
+
+    elif st.session_state.dialog_state == "recommendation":
+        st.write("Thank you for sharing! Let me find the best course for you...")
+        recommended_course = recommend_course(st.session_state.user_input, index, course_titles)
+        st.success(f"Based on what you've told me, I recommend: {recommended_course}")
