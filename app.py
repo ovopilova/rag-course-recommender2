@@ -2,6 +2,7 @@ import openai
 import numpy as np
 import faiss
 import streamlit as st
+import time
 
 # Укажите API-ключ OpenAI
 openai.api_key = st.secrets["OPENAI_API_KEY"]
@@ -24,11 +25,9 @@ def get_embedding(text, model="text-embedding-ada-002"):
 def build_vector_db(courses):
     descriptions = [course["description"] for course in courses]
     embeddings = [get_embedding(desc) for desc in descriptions]
-
     dimension = len(embeddings[0])
     index = faiss.IndexFlatL2(dimension)
     index.add(np.array(embeddings).astype('float32'))
-
     return index, embeddings
 
 # Рекомендация курса
