@@ -1,98 +1,57 @@
-import os
-import requests
-from bs4 import BeautifulSoup
-import faiss
-import numpy as np
 import openai
+import numpy as np
+import faiss
 import streamlit as st
-from typing import List, Tuple
 
-def fetch_courses() -> List[str]:
-    """
-    Fetch course titles from karpov.courses.
-    Returns a list of course titles.
-    """
-    base_url = "https://karpov.courses"
-    response = requests.get(base_url)
-    if response.status_code != 200:
-        print("Failed to fetch courses from karpov.courses.")
-        return []
+# Укажите API-ключ OpenAI
+openai.api_key = st.secrets["OPENAI_API_KEY"]
 
-    soup = BeautifulSoup(response.text, "html.parser")
-    course_titles = []
+# Список курсов
+courses = [
+    {"name": "Машинное обучение", "description": "Изучите алгоритмы машинного обучения, такие как регрессия, деревья решений и кластеризация."},
+    {"name": "SQL для аналитиков", "description": "Освойте SQL, чтобы работать с базами данных и анализировать данные."},
+    {"name": "Нейронные сети", "description": "Изучите основы нейронных сетей и разработайте свои первые модели на Python."},
+    {"name": "Анализ данных в Python", "description": "Научитесь анализировать данные с помощью pandas, numpy и matplotlib."},
+    {"name": "Продуктовая аналитика", "description": "Изучите основные метрики продуктовой аналитики и научитесь строить отчёты."}
+]
 
-    # Найти все ссылки на курсы
-    for course in soup.find_all('a', class_='t978__innermenu-link'):
-        try:
-            title = course.find('span', class_='t978__link-inner_left').text.strip()
-            course_titles.append(title)
-        except Exception as e:
-            print(f"Error fetching course title: {e}")
-
-    return list(set(course_titles))  # Удалить дубликаты
-
-def get_embedding(text: str, model: str = "text-embedding-ada-002") -> np.ndarray:
-    """
-    Get OpenAI embedding for a given text.
-    """
+# Получение эмбеддингов с помощью OpenAI
+def get_embedding(text, model="text-embedding-ada-002"):
     response = openai.Embedding.create(input=text, model=model)
-    return np.array(response["data"][0]["embedding"], dtype=np.float32)
+    return np.array(response['data'][0]['embedding'])
 
-def build_vector_db(course_titles: List[str]) -> Tuple[faiss.IndexFlatL2, List[str]]:
-    """
-    Build a FAISS vector database from course titles.
-    Returns the FAISS index and corresponding course titles.
-    """
-    embeddings = [get_embedding(title) for title in course_titles]
+# Создание векторной базы данных
+def build_vector_db(courses):
+    descriptions = [course["description"] for course in courses]
+    embeddings = [get_embedding(desc) for desc in descriptions]
 
     dimension = len(embeddings[0])
     index = faiss.IndexFlatL2(dimension)
-    index.add(np.array(embeddings))
+    index.add(np.array(embeddings).astype('float32'))
 
-    return index, course_titles
+    return index, embeddings
 
-def recommend_course(user_input: str, index: faiss.IndexFlatL2, course_titles: List[str], model: str = "text-embedding-ada-002") -> str:
-    """
-    Recommend a course based on user input.
-    """
-    user_embedding = get_embedding(user_input, model=model)
-    _, indices = index.search(np.array([user_embedding]), k=1)
-    return course_titles[indices[0][0]]
+# Рекомендация курса
+def recommend_course(user_query, index, courses):
+    query_embedding = get_embedding(user_query).astype('float32').reshape(1, -1)
+    distances, indices = index.search(query_embedding, 1)
+    recommended_course = courses[indices[0][0]]
+    return recommended_course, distances[0][0]
 
-# STREAMLIT APPLICATION
-st.title("Course Recommender")
+# Создание интерфейса Streamlit
+st.title("Рекомендатор курсов")
+st.write("Введите свои интересы, и мы подберём для вас подходящий курс!")
 
-# Get API Key from Streamlit Secrets
-openai.api_key = st.secrets["OPENAI_API_KEY"]
+user_input = st.text_input("Что вы хотите изучить?", placeholder="Например, машинное обучение, SQL, анализ данных...")
 
-# Fetch courses
-st.write("Fetching courses from karpov.courses...")
-course_titles = fetch_courses()
+if user_input:
+    with st.spinner("Ищем подходящий курс..."):
+        # Построение векторной базы
+        index, _ = build_vector_db(courses)
 
-if not course_titles:
-    st.error("No courses found. Please check the parsing logic.")
-else:
-    st.success(f"Fetched {len(course_titles)} courses.")
+        # Рекомендация курса
+        recommended_course, distance = recommend_course(user_input, index, courses)
 
-    # Build vector database
-    st.write("Building vector database...")
-    index, course_titles = build_vector_db(course_titles)
-
-    # User interaction
-    st.write("Let's find the best course for you!")
-
-    if "dialog_state" not in st.session_state:
-        st.session_state.dialog_state = "initial"
-
-    if st.session_state.dialog_state == "initial":
-        st.write("Hi! What would you like to learn today?")
-        user_input = st.text_input("Your answer:")
-
-        if user_input:
-            st.session_state.user_input = user_input
-            st.session_state.dialog_state = "recommendation"
-
-    elif st.session_state.dialog_state == "recommendation":
-        st.write("Thank you! Let me find the best course for you...")
-        recommended_course = recommend_course(st.session_state.user_input, index, course_titles)
-        st.success(f"Based on what you've told me, I recommend: {recommended_course}")
+        # Вывод результата
+        st.success(f"Мы рекомендуем вам курс: **{recommended_course['name']}**")
+        st.write(f"Описание: {recommended_course['description']}")
