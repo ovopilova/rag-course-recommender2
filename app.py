@@ -56,13 +56,24 @@ def fetch_courses() -> List[Tuple[str, str]]:
     return list(set(courses))  # Удалить дубликаты
 
 
-# 2. BUILD VECTOR DATABASE
-def get_embedding(text: str, model: str = "text-embedding-ada-002") -> np.ndarray:
+import time
+
+def get_embedding(text: str, model: str = "text-embedding-ada-002", max_retries: int = 5) -> np.ndarray:
     """
-    Get OpenAI embedding for a given text.
+    Get OpenAI embedding for a given text with retries for RateLimitError.
     """
-    response = openai.Embedding.create(input=text, model=model)
-    return np.array(response["data"][0]["embedding"], dtype=np.float32)
+    for attempt in range(max_retries):
+        try:
+            response = openai.Embedding.create(input=text, model=model)
+            return np.array(response["data"][0]["embedding"], dtype=np.float32)
+        except openai.error.RateLimitError:
+            wait_time = (2 ** attempt) + (0.1 * np.random.random())  # Экспоненциальная задержка с джиттером
+            print(f"Rate limit exceeded. Retrying in {wait_time:.2f} seconds...")
+            time.sleep(wait_time)
+        except Exception as e:
+            print(f"An error occurred: {e}")
+            break  # Прерываем цикл при других ошибках
+    raise Exception("Failed to get embedding after multiple retries.")
 
 def build_vector_db(courses: List[Tuple[str, str]]) -> Tuple[faiss.IndexFlatL2, List[str]]:
     """
