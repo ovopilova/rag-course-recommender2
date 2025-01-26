@@ -3,6 +3,7 @@ import json
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 import streamlit as st
+from bs4 import BeautifulSoup
 
 # Замените на ваш API ключ для YandexGPT
 YANDEX_API_KEY = 'your-yandex-api-key'
