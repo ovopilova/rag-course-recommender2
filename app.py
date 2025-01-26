@@ -4,25 +4,24 @@ from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 import streamlit as st
 from bs4 import BeautifulSoup
+from transformers import pipeline
 
-# Замените на ваш API ключ для YandexGPT
-YANDEX_API_KEY = 'your-yandex-api-key'
+# Инициализируем генератор с использованием модели GPT-2 от HuggingFace
+generator = pipeline('text-generation', model='gpt2')
 
-# Функция для получения эмбеддинга через YandexGPT
-def get_yandex_gpt_embedding(text):
-    url = "https://api.sbercloud.ru/v1/embeddings/yandex"
-    headers = {
-        "Authorization": f"Bearer {YANDEX_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    data = {
-        "input": text
-    }
-    response = requests.post(url, headers=headers, json=data)
-    if response.status_code == 200:
-        return np.array(response.json()['embedding'])
-    else:
-        raise Exception("Ошибка при получении эмбеддинга от YandexGPT")
+# Функция для получения эмбеддинга через GPT-2
+def get_gpt2_embedding(text):
+    # Генерируем текст продолжения с использованием GPT-2
+    result = generator(text, max_length=50)
+    generated_text = result[0]['generated_text']
+    
+    # Возвращаем эмбеддинг (например, можно взять вектор из первой части текста, преобразованного в числовой вектор)
+    # Для простоты будем использовать токенизацию и получение эмбеддинга
+    tokens = generator.tokenizer.encode(generated_text, return_tensors='pt')
+    embedding = generator.model.transformer.wte(tokens)
+    
+    # Используем среднее значение токенов как эмбеддинг
+    return embedding.mean(dim=1).detach().numpy()
 
 # Парсим курсы с сайта Karpov
 def get_courses():
@@ -51,9 +50,9 @@ def recommend_course(user_input, courses):
 
     for title, _ in courses:
         course_titles.append(title)
-        course_embeddings.append(get_yandex_gpt_embedding(title))  # Эмбеддинги для каждого курса
+        course_embeddings.append(get_gpt2_embedding(title))  # Эмбеддинги для каждого курса
 
-    query_embedding = get_yandex_gpt_embedding(user_input)  # Эмбеддинг запроса
+    query_embedding = get_gpt2_embedding(user_input)  # Эмбеддинг запроса
 
     similarities = cosine_similarity([query_embedding], course_embeddings)
     recommended_index = similarities.argmax()
